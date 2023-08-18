@@ -66,12 +66,12 @@ impl<F: Filter> PortState<F> {
         }
     }
 
-    pub(crate) fn handle_general_receive<C: Clock>(
+    pub(crate) fn handle_general_receive<'b, C: Clock>(
         &mut self,
         message: Message,
         port_identity: PortIdentity,
         clock: &mut C,
-    ) -> PortActionIterator {
+    ) -> PortActionIterator<'b> {
         match self {
             PortState::Master(_) => {
                 if message.header().source_port_identity != port_identity {

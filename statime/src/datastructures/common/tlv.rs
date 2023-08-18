@@ -1,7 +1,7 @@
 use crate::datastructures::WireFormatError;
 
-#[derive(Clone, PartialEq, Eq, Default)]
-pub(crate) struct TlvSet<'a> {
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub struct TlvSet<'a> {
     bytes: &'a [u8],
 }
 
@@ -86,7 +86,7 @@ impl<'a> TlvSet<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Tlv<'a> {
+pub struct Tlv<'a> {
     pub tlv_type: TlvType,
     pub value: &'a [u8],
 }

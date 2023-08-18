@@ -459,6 +459,10 @@ async fn handle_actions(
             PortAction::ResetFilterUpdateTimer { duration } => {
                 timers.filter_update_timer.as_mut().reset(duration);
             }
+            PortAction::PropagateTlv {
+                tlv_set,
+                current_time,
+            } => todo!(),
         }
     }
 
