@@ -21,10 +21,6 @@ impl<'a> TlvSet<'a> {
         Self { bytes }
     }
 
-    pub fn as_slice(&self) -> &[u8] {
-        self.bytes
-    }
-
     pub(crate) fn wire_size(&self) -> usize {
         // tlv should be an even number of octets!
         debug_assert_eq!(self.bytes.len() % 2, 0);
@@ -104,6 +100,19 @@ pub struct Tlv<'a> {
 impl<'a> Tlv<'a> {
     fn wire_size(&self) -> usize {
         4 + self.value.len()
+    }
+
+    pub fn write_serialized(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        // write tlv
+        w.write_all(&self.tlv_type.to_primitive().to_be_bytes())?;
+
+        // write the value length
+        w.write_all(&(self.value.len() as u16).to_be_bytes())?;
+
+        // write value
+        w.write_all(self.value)?;
+
+        Ok(())
     }
 
     #[allow(unused)]
