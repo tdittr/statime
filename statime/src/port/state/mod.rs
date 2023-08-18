@@ -4,7 +4,11 @@ use rand::Rng;
 
 use super::{PortActionIterator, TimestampContext};
 use crate::{
-    datastructures::{common::PortIdentity, datasets::DefaultDS, messages::Message},
+    datastructures::{
+        common::{PortIdentity, TlvSet},
+        datasets::DefaultDS,
+        messages::Message,
+    },
     ptp_instance::PtpInstanceState,
     time::{Interval, Time},
     Clock, Filter, PortConfig,
@@ -144,11 +148,12 @@ impl<F> PortState<F> {
         global: &PtpInstanceState,
         config: &PortConfig,
         port_identity: PortIdentity,
+        tlv_set: TlvSet<'_>,
         buffer: &'a mut [u8],
     ) -> PortActionIterator<'a> {
         match self {
             PortState::Master(master) => {
-                master.send_announce(global, config, port_identity, buffer)
+                master.send_announce(global, config, port_identity, tlv_set, buffer)
             }
             PortState::Slave(_) | PortState::Listening | PortState::Passive => actions![],
         }

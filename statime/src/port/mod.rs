@@ -177,11 +177,12 @@ impl<'a, C: Clock, F: Filter, R: Rng> Port<Running<'a>, R, C, F> {
     }
 
     // Handle the announce timer going of
-    pub fn handle_announce_timer(&mut self) -> PortActionIterator<'_> {
+    pub fn handle_announce_timer(&mut self, tlv_set: TlvSet<'_>) -> PortActionIterator<'_> {
         self.port_state.send_announce(
             self.lifecycle.state.deref(),
             &self.config,
             self.port_identity,
+            tlv_set,
             &mut self.packet_buffer,
         )
     }

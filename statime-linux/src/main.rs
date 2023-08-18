@@ -12,7 +12,7 @@ use rand::{rngs::StdRng, SeedableRng};
 use statime::{
     BasicFilter, Clock, ClockIdentity, InBmca, InstanceConfig, Port, PortAction,
     PortActionIterator, PtpInstance, SdoId, Time, TimePropertiesDS, TimeSource, TimestampContext,
-    MAX_DATA_LEN,
+    TlvSet, MAX_DATA_LEN,
 };
 use statime_linux::{
     clock::LinuxClock,
@@ -261,8 +261,13 @@ async fn run(
             bmca_notify,
         ));
 
+        let input = BmcaInput {
+            port: port_definition.port,
+            tlv_set: Vec::new(),
+        };
+
         main_task_sender
-            .send(port_definition.port)
+            .send(input)
             .await
             .expect("space in channel buffer");
 
@@ -286,9 +291,12 @@ async fn run(
 
         let mut bmca_ports = Vec::with_capacity(main_task_receivers.len());
         let mut mut_bmca_ports = Vec::with_capacity(main_task_receivers.len());
+        let mut propagate = Vec::new();
 
         for receiver in main_task_receivers.iter_mut() {
-            bmca_ports.push(receiver.recv().await.unwrap());
+            let output = receiver.recv().await.unwrap();
+            propagate.extend(output.tlv_set);
+            bmca_ports.push(output.port);
         }
 
         for mut_bmca_port in bmca_ports.iter_mut() {
@@ -299,13 +307,43 @@ async fn run(
 
         drop(mut_bmca_ports);
 
+        // 14.2.2.2 Unsupported TLVs marked "Propagate"
+        //
+        // If multiple TLVs are sent [..] the TLVs should be appended to the next
+        // Announce message in the order of arrival at the egress PTP Port from
+        // the ingress PTP Port of the PTP Instance.
+        propagate.sort();
+        let tlv: Vec<u8> = propagate.into_iter().flat_map(|tlv| tlv.bytes).collect();
+
         for (port, sender) in bmca_ports.into_iter().zip(main_task_senders.iter()) {
-            sender.send(port).await.unwrap();
+            let input = BmcaInput {
+                port,
+                tlv_set: tlv.clone(),
+            };
+
+            sender.send(input).await.unwrap();
         }
     }
 }
 
 type BmcaPort = Port<InBmca<'static>, StdRng, LinuxClock, BasicFilter>;
+
+struct BmcaInput {
+    port: BmcaPort,
+    tlv_set: Vec<u8>,
+}
+
+struct BmcaOutput {
+    port: BmcaPort,
+    tlv_set: Vec<OwnedTlv>,
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct OwnedTlv {
+    // represented as nanoseconds, for sorting
+    timestamp: u128,
+    bytes: Vec<u8>,
+}
 
 // the Port task
 //
@@ -314,8 +352,8 @@ type BmcaPort = Port<InBmca<'static>, StdRng, LinuxClock, BasicFilter>;
 // the task is notified of a BMCA, it will stop running, move the port into the
 // bmca state, and send it on its Sender
 async fn port_task(
-    mut port_task_receiver: Receiver<BmcaPort>,
-    port_task_sender: Sender<BmcaPort>,
+    mut port_task_receiver: Receiver<BmcaInput>,
+    port_task_sender: Sender<BmcaOutput>,
     mut event_socket: EventSocket,
     mut general_socket: GeneralSocket,
     local_clock: LinuxClock,
@@ -330,15 +368,21 @@ async fn port_task(
     };
 
     loop {
+        let mut next_tlv_set = Vec::new();
+
         let port_in_bmca = port_task_receiver.recv().await.unwrap();
 
         // handle post-bmca actions
-        let (mut port, actions) = port_in_bmca.end_bmca();
+        let (mut port, actions) = port_in_bmca.port.end_bmca();
+
+        // the first announce message will take (and clear) the tlv set
+        let mut current_tlv_set = TlvSet::new(&port_in_bmca.tlv_set);
 
         let mut pending_timestamp = handle_actions(
             actions,
             &mut event_socket,
             &mut general_socket,
+            &mut next_tlv_set,
             &mut timers,
             &local_clock,
         )
@@ -349,6 +393,7 @@ async fn port_task(
                 port.handle_send_timestamp(context, timestamp),
                 &mut event_socket,
                 &mut general_socket,
+                &mut next_tlv_set,
                 &mut timers,
                 &local_clock,
             )
@@ -369,7 +414,7 @@ async fn port_task(
                     Err(error) => panic!("Error receiving: {error:?}"),
                 },
                 () = &mut timers.port_announce_timer => {
-                    port.handle_announce_timer()
+                    port.handle_announce_timer(std::mem::take(&mut current_tlv_set))
                 },
                 () = &mut timers.port_sync_timer => {
                     port.handle_sync_timer()
@@ -393,6 +438,7 @@ async fn port_task(
                     actions,
                     &mut event_socket,
                     &mut general_socket,
+                    &mut next_tlv_set,
                     &mut timers,
                     &local_clock,
                 )
@@ -406,8 +452,12 @@ async fn port_task(
             }
         }
 
-        let port_in_bmca = port.start_bmca();
-        port_task_sender.send(port_in_bmca).await.unwrap();
+        let output = BmcaOutput {
+            port: port.start_bmca(),
+            tlv_set: Vec::new(),
+        };
+
+        port_task_sender.send(output).await.unwrap();
     }
 }
 
@@ -423,6 +473,7 @@ async fn handle_actions(
     actions: PortActionIterator<'_>,
     event_socket: &mut EventSocket,
     general_socket: &mut GeneralSocket,
+    tlv: &mut Vec<OwnedTlv>,
     timers: &mut Timers<'_>,
     local_clock: &LinuxClock,
 ) -> Option<(TimestampContext, Time)> {
@@ -462,7 +513,15 @@ async fn handle_actions(
             PortAction::PropagateTlv {
                 tlv_set,
                 current_time,
-            } => todo!(),
+            } => {
+                // record so that they can be propagated
+                let new = OwnedTlv {
+                    timestamp: current_time.to_nanos(),
+                    bytes: tlv_set.as_slice().to_vec(),
+                };
+
+                tlv.push(new)
+            }
         }
     }
 

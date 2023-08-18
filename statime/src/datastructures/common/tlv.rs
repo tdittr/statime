@@ -15,6 +15,16 @@ impl<'a> core::fmt::Debug for TlvSet<'a> {
 }
 
 impl<'a> TlvSet<'a> {
+    pub fn new(bytes: &'a [u8]) -> Self {
+        debug_assert_eq!(bytes.len() % 2, 0);
+
+        Self { bytes }
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        self.bytes
+    }
+
     pub(crate) fn wire_size(&self) -> usize {
         // tlv should be an even number of octets!
         debug_assert_eq!(self.bytes.len() % 2, 0);
