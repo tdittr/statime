@@ -407,7 +407,7 @@ async fn port_task_step(
         general_socket,
         &mut next_tlv_set,
         timers,
-        &local_clock,
+        local_clock,
     )
     .await;
 
@@ -418,7 +418,7 @@ async fn port_task_step(
             general_socket,
             &mut next_tlv_set,
             timers,
-            &local_clock,
+            local_clock,
         )
         .await;
     }
@@ -463,7 +463,7 @@ async fn port_task_step(
                 general_socket,
                 &mut next_tlv_set,
                 timers,
-                &local_clock,
+                local_clock,
             )
             .await;
 
