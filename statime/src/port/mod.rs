@@ -294,9 +294,17 @@ impl<'a, C: Clock, F: Filter, R: Rng> Port<Running<'a>, R, C, F> {
                     current_time,
                 };
 
-                match message.suffix.announce_propagate_tlv().count() {
-                    0 => actions![reset],
-                    _ => actions![reset, propagate],
+                let sent_by_current_master = match &self.port_state {
+                    PortState::Slave(slave_state) => {
+                        slave_state.remote_master() == message.header.source_port_identity
+                    }
+                    PortState::Listening | PortState::Master(_) | PortState::Passive => false,
+                };
+
+                if sent_by_current_master && message.suffix.announce_propagate_tlv().count() > 0 {
+                    actions![reset, propagate]
+                } else {
+                    actions![reset]
                 }
             }
             _ => {
